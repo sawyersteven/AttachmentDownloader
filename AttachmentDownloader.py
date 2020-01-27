@@ -24,18 +24,66 @@ import imaplib                          # nopep8
 import re                               # nopep8
 import getpass                          # nopep8
 import time                             # nopep8
-import usb.core                         # nopep8
 import email                            # nopep8
 import tempfile                         # nopep8
 import zipfile                          # nopep8
 from playsound import playsound         # nopep8
+from platform import system             # nopep8
+
+SYSTEM = system()
+if SYSTEM == 'Windows':
+    import ctypes
+else:
+    import pyudev
 
 MAILSERVER = None
 TEMPDIR = tempfile.gettempdir()
+os.chdir(os.path.dirname(os.path.realpath(__file__)))
+ALERTSOUND = './alert.mp3'
+GETDRIVE = None
 
 mailRegex = r'^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$'
 
-ALERTSOUND = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'alert.mp3')
+
+def _getDriveWindows():
+    drive_letters = []
+    n_drives = ctypes.windll.kernel32.GetLogicalDrives()
+    for i in range(0, 25):
+        j = 2**i
+        if n_drives & j > 0:
+            drive_letters.append((chr(65 + i) + ":/").encode())
+
+    for i in drive_letters:
+        if ctypes.windll.kernel32.GetDriveTypeA(i) == 2:
+            print("Using external drive " + i)
+            return i
+    return None
+
+
+def _getDriveNix():
+    ctx = pyudev.Context()
+    usb_drives = list(ctx.list_devices(ID_BUS='usb', subsystem='block'))
+
+    devnames = []
+    for drive in usb_drives:
+        if drive.get('DEVTYPE') == 'partition' and drive.get('DEVNAME'):
+            devnames.append(drive.get('DEVNAME'))
+
+    if len(devnames) == 0:
+        return None
+
+    mounts = {}
+    with open('/proc/mounts') as f:
+        for line in f.readlines():
+            parts = line.split(' ')
+            mounts[parts[0]] = parts[1]
+
+    for dev in devnames:
+        p = mounts.get(dev)
+        if p != None:
+            return p
+
+    return None
 
 
 def validateAddress(address):
@@ -73,6 +121,13 @@ def getMailBox():
 
 
 def main():
+    global GETDRIVE
+
+    SYSTEM = system()
+    if SYSTEM == 'Windows':
+        GETDRIVE = _getDriveWindows
+    else:
+        GETDRIVE = _getDriveNix
 
     if ADDRESS == '':
         getAddress()
@@ -90,24 +145,23 @@ def main():
         time.sleep(CHECKRATE)
 
 
-def getDrive():
-    # todo: test this
-    devs = list(usb.core.find(find_all=True, bdeviceClass=8))
-    if len(devs) > 0:
-        return devs[0]
-    else:
-        return None
-
-
 def mainLoop():
     global MAILSERVER
-    drive = getDrive()
+
+    print('\n\n')
+    print('Checking {} for new attachments'.format(ADDRESS))
+
+    drive = GETDRIVE()
     if drive is None:
+        print('USB drive not found, skipping cycle')
         return
+
+    print('Found usb drive at ' + drive)
 
     if MAILSERVER is None:
         getMailBox()
     if MAILSERVER is None:
+        print('Could not connect to email service')
         return
 
     tempzipfile = None
@@ -126,6 +180,7 @@ def mainLoop():
 
     msgIds = response[0].split(b' ')
     if len(msgIds) == 0 or msgIds == [b'']:
+        print('No unread emails on server')
         return
 
     _, raw_message = MAILSERVER.fetch(msgIds[-1], 'RFC822')
@@ -141,8 +196,10 @@ def mainLoop():
 
         tempzipfile = os.path.join(TEMPDIR, filename)
         if os.path.isfile(tempzipfile):
+            print('Removing existing zip file')
             os.remove(tempzipfile)
 
+        print('Downloading zip to local temp dir')
         with open(tempzipfile, 'wb') as f:
             f.write(part.get_payload(decode=True))
 
@@ -150,6 +207,8 @@ def mainLoop():
 
     if tempzipfile is None:
         return
+
+    print('Extracting zip to drive: ' + drive)
 
     with zipfile.ZipFile(tempzipfile, 'r') as zipf:
         zipf.extractall(drive)
