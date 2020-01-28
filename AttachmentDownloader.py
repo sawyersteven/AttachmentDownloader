@@ -51,12 +51,12 @@ def _getDriveWindows():
     for i in range(0, 25):
         j = 2**i
         if n_drives & j > 0:
-            drive_letters.append((chr(65 + i) + ":/").encode())
+            drive_letters.append((chr(65 + i) + ':/').encode())
 
     for i in drive_letters:
         if ctypes.windll.kernel32.GetDriveTypeA(i) == 2:
-            print("Using external drive " + i)
-            return i
+            print('Using external drive {}'.format(i))
+            return i.decode('utf-8')
     return None
 
 
@@ -120,6 +120,39 @@ def getMailBox():
         print('\n\n')
 
 
+def downloadAttachment(msgid):
+    _, raw_message = MAILSERVER.fetch(msgid, 'RFC822')
+
+    message = email.message_from_string(raw_message[0][1].decode('utf-8'))
+
+    for part in message.walk():
+        if(part.get_content_maintype() == 'multipart') or part.get('Content-Disposition') is None:
+            continue
+        filename = part.get_filename()
+        if not filename:
+            continue
+
+        tempfile = os.path.join(TEMPDIR, '{}_{}'.format(msgid, filename))
+        if os.path.isfile(tempfile):
+            print('Removing old zip file from temp dir')
+            os.remove(tempfile)
+
+        print('Downloading zip to local temp dir as {}'.format(filename))
+        with open(tempfile, 'wb') as f:
+            f.write(part.get_payload(decode=True))
+
+        break
+
+    MAILSERVER.store(msgid, '+FLAGS', r'(\Seen)')
+
+
+def extractZip(file, dst):
+    print('Extracting zip to {}'.format(dst))
+
+    with zipfile.ZipFile(file, 'r') as zipf:
+        zipf.extractall(dst)
+
+
 def main():
     global GETDRIVE
 
@@ -156,15 +189,13 @@ def mainLoop():
         print('USB drive not found, skipping cycle')
         return
 
-    print('Found usb drive at ' + drive)
+    print('Found usb drive at {}'.format(drive))
 
     if MAILSERVER is None:
         getMailBox()
     if MAILSERVER is None:
         print('Could not connect to email service')
         return
-
-    tempzipfile = None
 
     try:
         code, response = MAILSERVER.search(None, '(UNSEEN)')
@@ -174,46 +205,23 @@ def mainLoop():
         return
 
     if code != 'OK':
-        print('Mailserver responded with ' + code)
+        print('Mailserver responded with {}'.format(code))
         MAILSERVER = None
         return
 
+    MAILSERVER.select(readonly=0)
     msgIds = response[0].split(b' ')
     if len(msgIds) == 0 or msgIds == [b'']:
         print('No unread emails on server')
         return
 
-    _, raw_message = MAILSERVER.fetch(msgIds[-1], 'RFC822')
+    attachments = []
+    for msgid in msgIds[::-1]:
+        attachments.append(downloadAttachment(msgid))
 
-    message = email.message_from_string(raw_message[0][1].decode('utf-8'))
+    for attachment in attachments:
+        extractZip(attachment, drive)
 
-    for part in message.walk():
-        if(part.get_content_maintype() == 'multipart') or part.get('Content-Disposition') is None:
-            continue
-        filename = part.get_filename()
-        if not filename:
-            continue
-
-        tempzipfile = os.path.join(TEMPDIR, filename)
-        if os.path.isfile(tempzipfile):
-            print('Removing existing zip file')
-            os.remove(tempzipfile)
-
-        print('Downloading zip to local temp dir')
-        with open(tempzipfile, 'wb') as f:
-            f.write(part.get_payload(decode=True))
-
-        break
-
-    if tempzipfile is None:
-        return
-
-    print('Extracting zip to drive: ' + drive)
-
-    with zipfile.ZipFile(tempzipfile, 'r') as zipf:
-        zipf.extractall(drive)
-
-    MAILSERVER.store(msgIds[-1], '+FLAGS', '(\Seen)')
     playsound(ALERTSOUND)
 
 
