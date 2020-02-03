@@ -144,6 +144,7 @@ def downloadAttachment(msgid):
         break
 
     MAILSERVER.store(msgid, '+FLAGS', r'(\Seen)')
+    return tempfile
 
 
 def extractZip(file, dst):
@@ -219,8 +220,8 @@ def mainLoop():
     for msgid in msgIds[::-1]:
         attachments.append(downloadAttachment(msgid))
 
-    for attachment in attachments:
-        extractZip(attachment, drive)
+    for filename in attachments:
+        extractZip(filename, drive)
 
     playsound(ALERTSOUND)
 
