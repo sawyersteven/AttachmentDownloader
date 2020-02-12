@@ -25,7 +25,6 @@ import re                               # nopep8
 import getpass                          # nopep8
 import time                             # nopep8
 import email                            # nopep8
-import tempfile                         # nopep8
 import zipfile                          # nopep8
 from playsound import playsound         # nopep8
 from platform import system             # nopep8
@@ -37,8 +36,8 @@ else:
     import pyudev
 
 MAILSERVER = None
-TEMPDIR = tempfile.gettempdir()
 os.chdir(os.path.dirname(os.path.realpath(__file__)))
+TEMPDIR = os.path.abspath('./TEMP')
 ALERTSOUND = './alert.mp3'
 GETDRIVE = None
 
@@ -222,6 +221,7 @@ def mainLoop():
 
     for filename in attachments:
         extractZip(filename, drive)
+        os.remove(filename)
 
     playsound(ALERTSOUND)
 
